@@ -1,0 +1,13 @@
+.git/
+.gitignore
+target/
+.codegraph/
+Dockerfile
+README.md
+LICENSE
+CHANGELOG.md
+GIT_FLOW.md
+cliff.toml
+.vampus.yml
+quadlets/
+.github/
