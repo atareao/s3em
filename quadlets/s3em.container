@@ -1,0 +1,27 @@
+[Unit]
+Description=S3 Manager API
+
+[Container]
+Image=s3em:latest
+ContainerName=s3em
+PublishPort=4004:4004
+Volume=s3em.volume:/data
+
+Environment=RUST_LOG=debug
+Environment=SERVER_HOST=0.0.0.0
+Environment=SERVER_PORT=4004
+Environment=DATABASE_URL=/data/s3em.db
+Environment=S3_ENDPOINT=https://s3.territoriolinux.es
+Environment=S3_REGION=default
+Environment=S3_BUCKET=workspace
+Environment=S3_ACCESS_KEY=fmArDuyQiLTg3WPEGCpc
+Environment=S3_SECRET_KEY=yaLflDZBz8wtUkPE4KVvYNjCqF3sGnXArSxM51Oc
+Environment=S3_PATH_STYLE=true
+Environment=JWT_SECRET=change-me-in-production
+Environment=MASTER_API_KEY=dev-key-123
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
