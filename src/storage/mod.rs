@@ -101,4 +101,40 @@ impl S3Storage {
             .map_err(|e| format!("S3 delete error: {e}"))?;
         Ok(())
     }
+
+    pub async fn list_objects(&self) -> Result<Vec<String>, String> {
+        let mut keys = Vec::new();
+        let mut token: Option<String> = None;
+
+        loop {
+            let mut request = self.client.list_objects_v2().bucket(&self.bucket);
+            if let Some(t) = &token {
+                request = request.continuation_token(t.clone());
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|e| format!("S3 list error: {e}"))?;
+
+            let contents = response.contents();
+            if !contents.is_empty() {
+                for obj in contents {
+                    if let Some(key) = obj.key() {
+                        keys.push(key.to_string());
+                    }
+                }
+            }
+
+            token = if response.is_truncated().unwrap_or(false) {
+                response.next_continuation_token().map(|s| s.to_string())
+            } else {
+                None
+            };
+            if token.is_none() {
+                break;
+            }
+        }
+
+        Ok(keys)
+    }
 }
