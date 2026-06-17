@@ -127,6 +127,31 @@ pub fn soft_delete(pool: &DbPool, id: &str, deleted_at: &str) -> Result<(), AppE
     Ok(())
 }
 
+pub fn list_all_s3_keys(pool: &DbPool) -> Result<Vec<String>, AppError> {
+    let conn = pool.get()?;
+    let mut stmt = conn.prepare("SELECT path, name FROM files")?;
+    let rows = stmt.query_map([], |row| {
+        let path: String = row.get(0)?;
+        let name: String = row.get(1)?;
+        Ok((path, name))
+    })?;
+
+    let keys: Vec<String> = rows
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|(path, name)| {
+            let base = path.trim_end_matches('/');
+            if base.is_empty() {
+                name
+            } else {
+                format!("{}/{}", base, name)
+            }
+        })
+        .collect();
+
+    Ok(keys)
+}
+
 fn row_to_file_record(row: &rusqlite::Row) -> rusqlite::Result<FileRecord> {
     Ok(FileRecord {
         id: row.get(0)?,
