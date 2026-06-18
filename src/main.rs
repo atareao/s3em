@@ -9,8 +9,11 @@ mod storage;
 
 use std::sync::Arc;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use axum::serve;
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
+use futures_util::future::join_all;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -47,7 +50,9 @@ async fn main() -> anyhow::Result<()> {
     let app = api::build_router(state);
 
     let listener = TcpListener::bind(cfg.server_addr()).await?;
-    tracing::info!("Listening on {}", cfg.server_addr());
+    let addr = listener.local_addr()?;
+    tracing::info!("Listening on {}", addr);
+    tracing::info!("🚀 Server ready on port {}", addr.port());
     serve(listener, app).await?;
 
     Ok(())
@@ -66,22 +71,56 @@ async fn sync_storage_with_db(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to list S3 objects: {e}"))?;
 
-    for s3_key in &s3_keys {
-        if !db_set.contains(s3_key.as_str()) {
-            tracing::warn!("Orphan S3 object, removing: {s3_key}");
-            storage
-                .delete(s3_key)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to delete orphan S3 object {s3_key}: {e}"))?;
+    let orphans: Vec<&str> = s3_keys.iter().filter_map(|k| {
+        if !db_set.contains(k.as_str()) {
+            Some(k.as_str())
+        } else {
+            None
+        }
+    }).collect();
+
+    if orphans.is_empty() {
+        tracing::info!("Sync complete: no orphan objects found");
+        return Ok(());
+    }
+
+    let semaphore = Arc::new(Semaphore::new(10));
+    let deleted = Arc::new(AtomicUsize::new(0));
+    let total = orphans.len();
+
+    let tasks: Vec<_> = orphans.into_iter().map(|s3_key| {
+        let sem = Arc::clone(&semaphore);
+        let del = Arc::clone(&deleted);
+        let key = s3_key.to_string();
+        async move {
+            let _permit = sem.acquire().await.unwrap();
+            storage.delete(&key).await.map_err(|e| {
+                anyhow::anyhow!("Failed to delete orphan S3 object {key}: {e}")
+            })?;
+            del.fetch_add(1, Ordering::Relaxed);
+            tracing::debug!("Deleted orphan S3 object: {key}");
+            Ok::<_, anyhow::Error>(())
+        }
+    }).collect();
+
+    let results: Vec<anyhow::Result<()>> = join_all(tasks).await;
+
+    let mut errors = 0;
+    for r in &results {
+        if let Err(e) = r {
+            tracing::error!("{e}");
+            errors += 1;
         }
     }
 
-    let orphan_count = s3_keys.len() - db_set.len();
-    if orphan_count > 0 {
-        tracing::info!("Sync complete: removed {orphan_count} orphan object(s) from S3");
-    } else {
-        tracing::info!("Sync complete: no orphan objects found");
-    }
+    let deleted_count = deleted.load(Ordering::Relaxed);
+    tracing::info!(
+        "Sync complete: removed {deleted_count}/{total} orphan object(s) from S3 ({errors} errors)",
+    );
 
-    Ok(())
+    if errors > 0 {
+        Err(anyhow::anyhow!("{errors} orphan deletion(s) failed"))
+    } else {
+        Ok(())
+    }
 }

@@ -127,6 +127,27 @@ pub fn soft_delete(pool: &DbPool, id: &str, deleted_at: &str) -> Result<(), AppE
     Ok(())
 }
 
+pub fn count_files(pool: &DbPool, filters: &FileFilter) -> Result<i64, AppError> {
+    let conn = pool.get()?;
+    let mut sql = String::from("SELECT COUNT(*) FROM files WHERE deleted_at IS NULL");
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(ref path_filter) = filters.path {
+        param_values.push(Box::new(format!("{}%", path_filter)));
+        sql.push_str(&format!(" AND path LIKE ?{}", param_values.len()));
+    }
+    if let Some(ref search) = filters.search {
+        param_values.push(Box::new(format!("%{}%", search)));
+        sql.push_str(&format!(" AND name LIKE ?{}", param_values.len()));
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
+    let count: i64 = stmt.query_row(params_refs.as_slice(), |row| row.get(0))?;
+    Ok(count)
+}
+
 pub fn list_all_s3_keys(pool: &DbPool) -> Result<Vec<String>, AppError> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare("SELECT path, name FROM files")?;
