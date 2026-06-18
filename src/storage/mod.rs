@@ -65,6 +65,7 @@ impl S3Storage {
         data: ByteStream,
         content_type: &str,
     ) -> Result<String, String> {
+        tracing::debug!(key, content_type, "uploading to S3");
         let result = self
             .client
             .put_object()
@@ -75,20 +76,26 @@ impl S3Storage {
             .send()
             .await
             .map_err(|e| format!("S3 upload error: {e}"))?;
-        Ok(result
+        let etag = result
             .e_tag()
             .map(|e| e.trim_matches('"').to_string())
-            .unwrap_or_default())
+            .unwrap_or_default();
+        tracing::debug!(key, etag, "upload to S3 complete");
+        Ok(etag)
     }
 
     pub async fn download(&self, key: &str) -> Result<GetObjectOutput, String> {
-        self.client
+        tracing::debug!(key, "downloading from S3");
+        let output = self
+            .client
             .get_object()
             .bucket(&self.bucket)
             .key(key)
             .send()
             .await
-            .map_err(|e| format!("S3 download error: {e}"))
+            .map_err(|e| format!("S3 download error: {e}"))?;
+        tracing::debug!(key, content_type = ?output.content_type, "download from S3 complete");
+        Ok(output)
     }
 
     pub async fn delete(&self, key: &str) -> Result<(), String> {

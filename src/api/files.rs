@@ -1,6 +1,6 @@
 use axum::{
     extract::{Multipart, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, put},
     Json, Router,
@@ -63,7 +63,9 @@ async fn upload_idempotent(
                     .text()
                     .await
                     .map_err(|_| AppError::BadRequest("Invalid metadata".into()))?;
-                metadata = serde_json::from_str(&text).ok();
+                metadata = serde_json::from_str(&text)
+                    .map_err(|e| tracing::warn!("Failed to parse metadata: {e}"))
+                    .ok();
             }
             _ => {}
         }
@@ -197,9 +199,19 @@ async fn upload_idempotent(
 async fn list_files(
     State(state): State<SharedState>,
     Query(filters): Query<FileFilter>,
-) -> Result<Json<Vec<FileRecord>>, AppError> {
+) -> Result<(HeaderMap, Json<Vec<FileRecord>>), AppError> {
+    let total = db::files::count_files(&state.pool, &filters)?;
     let files = db::files::list_files(&state.pool, &filters)?;
-    Ok(Json(files))
+    tracing::debug!(
+        total,
+        returned = files.len(),
+        limit = ?filters.limit,
+        offset = ?filters.offset,
+        "list_files"
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert("X-Total-Count", total.to_string().parse().unwrap());
+    Ok((headers, Json(files)))
 }
 
 async fn get_file(
